@@ -4,14 +4,21 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Bilkent Instructor &amp; Course Guide</title>
+<meta name="theme-color" content="#F6EEF2" id="themeColorMeta" />
 <script>
   // Match the OS/browser color-scheme preference at startup, before first
   // paint (so there's no flash of the wrong theme). Runs once on load;
   // the toggle button still lets the person override it for the session.
+  // Also sets theme-color (the color Android uses for its own browser
+  // chrome / system nav bar around the page) to match -- otherwise it
+  // stays white regardless of our theme, which on Android shows as a
+  // jarring white bar at the bottom of the screen in dark mode.
   (function () {
     try {
       var wantsDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
       document.documentElement.setAttribute("data-theme", wantsDark ? "dark" : "light");
+      var meta = document.getElementById("themeColorMeta");
+      if (meta) meta.setAttribute("content", wantsDark ? "#201B27" : "#F6EEF2");
     } catch (e) { /* keep the light default */ }
   })();
 </script>

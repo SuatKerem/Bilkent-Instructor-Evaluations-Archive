@@ -7,6 +7,7 @@
    ========================================================================== */
 
 :root {
+  color-scheme: light;
   --ink:        #38324A;   /* primary text, soft plum-charcoal, not flat black */
   --ink-soft:   #7C7690;   /* secondary text */
   --bg-a:       #F6EEF2;   /* page wash, top-left */
@@ -31,6 +32,7 @@
 }
 
 [data-theme="dark"] {
+  color-scheme: dark;
   --ink:        #EEE8F2;
   --ink-soft:   #ACA3BC;
   --bg-a:       #201B27;

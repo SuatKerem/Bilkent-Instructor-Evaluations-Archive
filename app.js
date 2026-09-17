@@ -802,9 +802,30 @@ function init() {
   els.themeToggle.addEventListener("click", () => {
     const html = document.documentElement;
     const isDark = html.getAttribute("data-theme") === "dark";
-    html.setAttribute("data-theme", isDark ? "light" : "dark");
-    els.themeToggle.textContent = isDark ? "🌙" : "☀️";
+    const goingDark = isDark ? false : true;
+    html.setAttribute("data-theme", goingDark ? "dark" : "light");
+    els.themeToggle.textContent = goingDark ? "☀️" : "🌙";
+    const meta = document.getElementById("themeColorMeta");
+    if (meta) meta.setAttribute("content", goingDark ? "#201B27" : "#F6EEF2");
   });
+
+  handleDeepLink();
+}
+
+// If someone arrives via a link like "index.html?instructor=6083" (e.g.
+// from one of the static per-instructor SEO pages -- see generate_seo.py),
+// jump straight to that person: pre-fill the search box so the grid shows
+// just them, and open their detail modal automatically.
+function handleDeepLink() {
+  const insId = new URLSearchParams(location.search).get("instructor");
+  if (!insId) return;
+  const idNum = parseInt(insId, 10);
+  const rows = DATA.rows.filter((r) => r.insId === idNum);
+  if (!rows.length) return;
+  els.search.value = rows[0].name;
+  render();
+  const item = aggregateByTeacher(rows)[0];
+  if (item) openModal(item);
 }
 
 // Bootstrap: fetch the summary data first, then run the normal init().

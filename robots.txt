@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://suatkerem.github.io/Bilkent-Instructor-Evaluations-Archive/sitemap.xml
