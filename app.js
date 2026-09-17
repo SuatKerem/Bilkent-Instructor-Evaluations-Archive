@@ -3,39 +3,43 @@
 /* ======================================================================
    AI FEATURE HOOK
    ----------------------------------------------------------------------
-   This app currently shows a fast, non-AI "compact summary" that's built
-   at export time (export_data.py) by picking the longest/most informative
-   student comments. It's designed so you can swap in a real AI-generated
-   summary later without restructuring anything else.
+   This app shows a fast, non-AI "compact summary" by default (built at
+   export time by picking the longest/most informative student comments).
+   The block below lets you turn on a real AI-generated summary instead,
+   via the "AI Summary" button in each instructor's modal.
 
-   To wire it up:
-     1. Set AI_CONFIG.enabled = true below.
-     2. Point AI_CONFIG.endpoint at your own backend/serverless function
-        (do NOT put a real API key directly in this file if this site
-        will ever be hosted publicly -- a static file's JS is visible to
-        everyone. A tiny backend proxy that holds the key server-side is
-        the safe way to do this).
-     3. Fill in generateAISummary() below to POST the comments for a
-        teacher/course to that endpoint and return the summary text.
-   The rest of the app already calls getSummaryForModal() wherever a
-   summary is shown, so nothing else needs to change.
+   To turn it on:
+     1. Deploy the small proxy in gemini-proxy/ to Vercel (see its
+        README -- it holds your Gemini API key server-side; never put a
+        real key directly in this file, since a static site's JS is
+        visible to anyone who views the page source).
+     2. Set AI_CONFIG.enabled = true and AI_CONFIG.endpoint to your
+        Vercel URL + "/api/summarize" below.
+   That's it -- the button, the request, and displaying the result are
+   already wired up.
 ====================================================================== */
 const AI_CONFIG = {
-  enabled: false,
-  endpoint: null, // e.g. "https://your-backend.example.com/summarize"
+  enabled: true,
+  endpoint: "https://gemini-proxy-suwat1.vercel.app/api/summarize"
 };
 
-async function generateAISummary(commentsForCategory) {
-  // TODO: replace with a real call once you have a backend, e.g.:
-  //
-  // const res = await fetch(AI_CONFIG.endpoint, {
-  //   method: "POST",
-  //   headers: { "Content-Type": "application/json" },
-  //   body: JSON.stringify({ comments: commentsForCategory }),
-  // });
-  // const data = await res.json();
-  // return data.summary;
-  return null;
+async function generateAISummary(comments, category, instructorName) {
+  if (!AI_CONFIG.enabled || !AI_CONFIG.endpoint) return { error: "AI summaries aren't configured yet." };
+  try {
+    const res = await fetch(AI_CONFIG.endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ comments, category, instructorName }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.summary) {
+      return { error: data.error || `Server returned ${res.status}` };
+    }
+    return { summary: data.summary };
+  } catch (err) {
+    console.error("Failed to fetch AI summary:", err);
+    return { error: "Couldn't reach the summary service." };
+  }
 }
 
 /* ====================================================================== */
@@ -637,10 +641,44 @@ function renderModalContent(item) {
     </div>
     ${tabPanels}
     <div class="ai-row">
-      <button class="ai-btn" disabled>✨ AI Summary</button>
-      <span class="ai-note">Coming soon — connect an API in app.js to enable AI-generated summaries.</span>
+      <button class="ai-btn" ${AI_CONFIG.enabled ? "" : "disabled"}>✨ AI Summary</button>
+      <span class="ai-note">${AI_CONFIG.enabled
+        ? "Summarizes the comments currently shown above using Gemini."
+        : "Coming soon — connect an API in app.js to enable AI-generated summaries."}</span>
     </div>
+    <div class="ai-summary-box" style="display:none;"></div>
   `;
+
+  const aiBtn = els.modalBody.querySelector(".ai-btn");
+  const aiNote = els.modalBody.querySelector(".ai-row .ai-note");
+  const aiBox = els.modalBody.querySelector(".ai-summary-box");
+  if (AI_CONFIG.enabled) {
+    aiBtn.addEventListener("click", async () => {
+      const activeTab = els.modalBody.querySelector(".tab-btn.active")?.dataset.tab || "instructor";
+      const courseKey = courseFilterEl ? courseFilterEl.value : "";
+      const groups = buildCommentGroups(item, courseTerms, activeTab, courseKey);
+      const allComments = groups.flatMap((g) => g.items);
+      if (!allComments.length) {
+        aiNote.textContent = "No comments to summarize for this tab.";
+        return;
+      }
+      aiBtn.disabled = true;
+      aiBtn.textContent = "✨ Summarizing…";
+      aiNote.textContent = "";
+      aiBox.style.display = "none";
+
+      const result = await generateAISummary(allComments, activeTab, item.name);
+
+      aiBtn.disabled = false;
+      aiBtn.textContent = "✨ AI Summary";
+      if (result.summary) {
+        aiBox.innerHTML = `<span class="ai-label">AI summary</span>${escapeHtml(result.summary)}`;
+        aiBox.style.display = "";
+      } else {
+        aiNote.textContent = result.error || "Couldn't generate a summary right now.";
+      }
+    });
+  }
 
   function mountTabPanel(category) {
     const panel = els.modalBody.querySelector(`.comment-block[data-panel="${category}"]`);
