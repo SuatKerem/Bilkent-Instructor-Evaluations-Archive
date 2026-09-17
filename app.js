@@ -41,47 +41,47 @@ async function generateAISummary(commentsForCategory) {
 /* ====================================================================== */
 
 /* ======================================================================
-   DATA LOADING -- fetched from separate JSON files
+   DATA LOADING -- summary fetched immediately, detail per-instructor
    ----------------------------------------------------------------------
-   Split into two files for the same reason as the local build: summary
-   (data-summary.json, ~5MB -- ratings, counts, one preview quote per row)
-   is fetched immediately and is all the browse/filter/sort/search UI
-   needs; detail (data-detail.json, ~75MB -- every question's full
-   breakdown, every comment) is only fetched once, lazily, the first time
-   someone opens an instructor's detail view, then cached in memory for
-   the rest of the session. On a real server (unlike a local file://
-   page) fetch() of same-origin files just works, so this is simpler than
-   the local build's version: no chunking, no waiting for full-document
-   parse -- the browser's own network/streaming layer handles a large
-   JSON response fine.
+   Summary (data-summary.json, ~7MB -- ratings, counts, one preview quote
+   per row) is fetched immediately and is all the browse/filter/sort/
+   search UI needs.
+
+   Detail is now ONE SMALL FILE PER INSTRUCTOR (detail/<insId>.json --
+   typically 30-60KB, rarely over half a MB for the most-evaluated
+   people), fetched only for the specific instructor someone actually
+   opens, then cached for the rest of the session. This used to be one
+   ~100MB file fetched in full on the very first modal open regardless
+   of who was clicked -- exactly the "everything downloads at once, slow
+   on slow wifi" problem. Now opening any instructor's profile costs
+   roughly a network round-trip plus tens of KB, not the whole dataset.
 ====================================================================== */
 let DATA = { rows: [], departments: {}, meta: {} };
 let THRESHOLD = 5;
 let QUESTION_LABELS = {};
 
-let DETAIL = null;
-function isDetailLoaded() {
-  return DETAIL !== null;
-}
-async function ensureDetail() {
-  if (!DETAIL) {
-    try {
-      const res = await fetch("data-detail.json");
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      DETAIL = await res.json();
-    } catch (err) {
-      console.error("Failed to load detail data:", err);
-      DETAIL = {};
-    }
+const instructorDetailCache = new Map(); // insId -> {"crsCode|crsNum": [terms]}
+
+async function ensureInstructorDetail(insId) {
+  if (instructorDetailCache.has(insId)) return instructorDetailCache.get(insId);
+  let data;
+  try {
+    const res = await fetch(`detail/${insId}.json`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    data = await res.json();
+  } catch (err) {
+    console.error(`Failed to load detail for instructor ${insId}:`, err);
+    data = {};
   }
-  return DETAIL;
+  instructorDetailCache.set(insId, data);
+  return data;
 }
 function getTerms(insId, crsCode, crsNum) {
-  // Safe to read DETAIL directly (no await) here: this is only ever called
-  // from renderModalContent(), which openModal() only invokes after already
-  // awaiting ensureDetail() once.
-  const d = DETAIL || {};
-  return d[`${insId}|${crsCode}|${crsNum}`] || [];
+  // Safe to read the cache directly (no await) here: this is only ever
+  // called from renderModalContent(), which openModal() only invokes
+  // after already awaiting ensureInstructorDetail(item.insId) once.
+  const d = instructorDetailCache.get(insId) || {};
+  return d[`${crsCode}|${crsNum}`] || [];
 }
 
 function semLabel(semCode) {
@@ -468,7 +468,7 @@ function termRowsHtml(courseIdx, terms) {
     .join("");
 }
 
-function groupedCommentsHtml(item, courseTermsArr, category, courseKey) {
+function buildCommentGroups(item, courseTermsArr, category, courseKey) {
   const multiCourse = item.courses.length > 1 && !courseKey;
   const groups = [];
   item.courses.forEach((c, i) => {
@@ -485,37 +485,80 @@ function groupedCommentsHtml(item, courseTermsArr, category, courseKey) {
       groups.push({ header, items });
     }
   });
+  return groups;
+}
+
+function groupHtml(g) {
+  return `
+    <div class="c-term-group">
+      <div class="c-term-label">${escapeHtml(g.header)}</div>
+      ${g.items.map((s) => `<div class="c-item">${escapeHtml(s)}</div>`).join("")}
+    </div>`;
+}
+
+// Renders comment groups a few at a time as the panel is scrolled, instead
+// of building potentially thousands of comments into the DOM the moment a
+// popular instructor's modal opens. Small comment counts (the common case)
+// just render in one pass with no observer at all -- this machinery only
+// kicks in when there's actually enough content for it to matter.
+const GROUPS_PER_BATCH = 4;
+
+function mountIncrementalComments(panelEl, groups, emptyMessage) {
+  panelEl.innerHTML = "";
   if (!groups.length) {
-    return `<div class="c-empty">No written comments on file for this category${courseKey ? " in this course" : ""}.</div>`;
+    panelEl.innerHTML = `<div class="c-empty">${emptyMessage}</div>`;
+    return;
   }
-  return groups
-    .map(
-      (g) => `
-        <div class="c-term-group">
-          <div class="c-term-label">${escapeHtml(g.header)}</div>
-          ${g.items.map((s) => `<div class="c-item">${escapeHtml(s)}</div>`).join("")}
-        </div>`
-    )
-    .join("");
+
+  let shown = 0;
+
+  function renderNextBatch() {
+    if (shown >= groups.length) return;
+    const end = Math.min(shown + GROUPS_PER_BATCH, groups.length);
+    panelEl.insertAdjacentHTML("beforeend", groups.slice(shown, end).map(groupHtml).join(""));
+    shown = end;
+    if (shown >= groups.length) panelEl.removeEventListener("scroll", onScroll);
+  }
+
+  // A plain scroll listener with a distance-from-bottom threshold, rather
+  // than IntersectionObserver: a moving sentinel's intersection state
+  // doesn't reliably toggle enter/exit as content grows beneath a fixed
+  // scroll position (verified directly -- the batching logic itself is
+  // correct and converges perfectly when driven directly; only the
+  // observer-based trigger was unreliable). This fires on every scroll
+  // event where the check holds, which is simpler and predictable.
+  function onScroll() {
+    if (panelEl.scrollTop + panelEl.clientHeight >= panelEl.scrollHeight - 300) {
+      renderNextBatch();
+    }
+  }
+
+  renderNextBatch();
+  if (shown < groups.length) {
+    panelEl.addEventListener("scroll", onScroll);
+    // The first batch might not even fill the panel enough to produce a
+    // scrollbar at all -- keep topping up until it does or everything's shown.
+    while (shown < groups.length && panelEl.scrollHeight <= panelEl.clientHeight) {
+      renderNextBatch();
+    }
+  }
 }
 
 async function openModal(item) {
   els.modalBody.innerHTML = `
     <button class="modal-close" data-close>&times;</button>
-    <div class="modal-loading"><span class="spinner"></span>Loading full details…</div>
+    <div class="modal-loading"><span class="spinner"></span>Loading…</div>
   `;
   els.modalBody.querySelector("[data-close]").addEventListener("click", closeModal);
   els.modalOverlay.classList.add("open");
 
-  if (isDetailLoaded()) {
+  if (instructorDetailCache.has(item.insId)) {
     renderModalContent(item);
     return;
   }
-  // Yield so the spinner actually paints before the wait-for-full-parse +
-  // one-time JSON.parse sequence begins (the parse itself is synchronous
-  // and would otherwise block the very paint meant to show it's loading).
+  // Yield once so the spinner actually paints before the fetch kicks off.
   await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
-  await ensureDetail();
+  await ensureInstructorDetail(item.insId);
   // The modal may have been closed (or reopened for someone else) during
   // that wait -- only render if this is still the open request that matters.
   if (!els.modalOverlay.classList.contains("open")) return;
@@ -573,10 +616,7 @@ function renderModalContent(item) {
       : "";
 
   const tabPanels = tabs
-    .map((t) => {
-      const body = groupedCommentsHtml(item, courseTerms, t, "");
-      return `<div class="comment-block" data-panel="${t}" style="${t === "instructor" ? "" : "display:none;"}">${body}</div>`;
-    })
+    .map((t) => `<div class="comment-block" data-panel="${t}" data-mounted="0" style="${t === "instructor" ? "" : "display:none;"}"></div>`)
     .join("");
 
   els.modalBody.innerHTML = `
@@ -602,6 +642,19 @@ function renderModalContent(item) {
     </div>
   `;
 
+  function mountTabPanel(category) {
+    const panel = els.modalBody.querySelector(`.comment-block[data-panel="${category}"]`);
+    if (!panel) return;
+    const courseKey = courseFilterEl ? courseFilterEl.value : "";
+    const groups = buildCommentGroups(item, courseTerms, category, courseKey);
+    const emptyMsg = `No written comments on file for this category${courseKey ? " in this course" : ""}.`;
+    mountIncrementalComments(panel, groups, emptyMsg);
+    panel.dataset.mounted = "1";
+  }
+
+  const courseFilterEl = els.modalBody.querySelector("#modalCourseFilter");
+  mountTabPanel("instructor"); // the initially-visible tab
+
   els.modalBody.querySelectorAll(".tab-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       els.modalBody.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
@@ -610,17 +663,19 @@ function renderModalContent(item) {
       els.modalBody.querySelectorAll(".comment-block").forEach((p) => {
         p.style.display = p.dataset.panel === tab ? "" : "none";
       });
+      const panel = els.modalBody.querySelector(`.comment-block[data-panel="${tab}"]`);
+      if (panel && panel.dataset.mounted !== "1") mountTabPanel(tab);
     });
   });
 
-  const courseFilterEl = els.modalBody.querySelector("#modalCourseFilter");
   if (courseFilterEl) {
     courseFilterEl.addEventListener("change", () => {
-      const key = courseFilterEl.value;
-      tabs.forEach((t) => {
-        const panel = els.modalBody.querySelector(`.comment-block[data-panel="${t}"]`);
-        if (panel) panel.innerHTML = groupedCommentsHtml(item, courseTerms, t, key);
-      });
+      // The filter changes which groups belong to every category, so any
+      // already-mounted panel is stale -- remount only the visible one now
+      // (lazily) and let the others re-mount next time they're clicked.
+      els.modalBody.querySelectorAll(".comment-block").forEach((p) => { p.dataset.mounted = "0"; });
+      const activeTab = els.modalBody.querySelector(".tab-btn.active")?.dataset.tab || "instructor";
+      mountTabPanel(activeTab);
     });
   }
 

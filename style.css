@@ -561,6 +561,7 @@ a { color: inherit; }
 .comment-block .c-item { padding: 9px 0; border-bottom: 1px solid var(--line); }
 .comment-block .c-item:last-child { border-bottom: none; }
 .comment-block .c-empty { color: var(--ink-soft); font-style: italic; }
+.c-sentinel { height: 1px; }
 
 .c-term-group { margin-bottom: 4px; }
 .c-term-group:not(:first-child) { margin-top: 12px; }
