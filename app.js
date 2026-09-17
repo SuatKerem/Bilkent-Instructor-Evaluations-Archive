@@ -20,7 +20,7 @@
 ====================================================================== */
 const AI_CONFIG = {
   enabled: true,
-  endpoint: "https://gemini-proxy-suwat1.vercel.app/api/summarize"
+  endpoint: "https://gemini-proxy-beta-lyart.vercel.app/api/summarize"
 };
 
 async function generateAISummary(comments, category, instructorName) {
