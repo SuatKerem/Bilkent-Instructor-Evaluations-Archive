@@ -72,9 +72,8 @@
       </div>
       <div class="field">
         <label for="courseSelect">Course</label>
-        <div id="courseWaiting" class="course-waiting">Pick a department first ↑</div>
-        <select id="courseSelect" style="display:none;">
-          <option value="">All courses in department</option>
+        <select id="courseSelect" disabled>
+          <option value="">Select a department first</option>
         </select>
       </div>
       <div class="field">
@@ -115,7 +114,8 @@
         </select>
       </div>
       <div style="display:flex; gap:10px; align-items:center;">
-        <button id="clearFilters" class="small-btn">↺ Clear filters</button>
+        <button id="clearFilters" class="link-btn">Clear filters</button>
+        <button id="exportCsv" class="small-btn">⬇ Export results as CSV</button>
       </div>
     </div>
   </div>
@@ -131,14 +131,6 @@
     Built for personal course-selection use — not an official Bilkent University resource.
   </footer>
 
-</div>
-
-<div id="compareBar" class="compare-bar" style="display:none;">
-  <span id="compareBarText"></span>
-  <div class="compare-bar-actions">
-    <button id="compareBarClear" class="link-btn">Clear</button>
-    <button id="compareBarGo" class="small-btn small-btn-primary">Compare ✨</button>
-  </div>
 </div>
 
 <div id="modalOverlay" class="modal-overlay">
