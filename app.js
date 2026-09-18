@@ -42,6 +42,26 @@ async function generateAISummary(comments, category, instructorName) {
   }
 }
 
+async function generateAIComparison(course, instructors, query) {
+  if (!AI_CONFIG.enabled || !AI_CONFIG.endpoint) return { error: "AI comparisons aren't configured yet." };
+  const compareEndpoint = AI_CONFIG.endpoint.replace(/\/summarize$/, "/compare");
+  try {
+    const res = await fetch(compareEndpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ course, instructors, query }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.comparison) {
+      return { error: data.error || `Server returned ${res.status}` };
+    }
+    return { comparison: data.comparison };
+  } catch (err) {
+    console.error("Failed to fetch AI comparison:", err);
+    return { error: "Couldn't reach the comparison service." };
+  }
+}
+
 /* ====================================================================== */
 
 /* ======================================================================
@@ -99,20 +119,25 @@ function semLabel(semCode) {
 const els = {
   deptSelect: document.getElementById("deptSelect"),
   courseSelect: document.getElementById("courseSelect"),
+  courseWaiting: document.getElementById("courseWaiting"),
   search: document.getElementById("search"),
   minResponses: document.getElementById("minResponses"),
   sortBy: document.getElementById("sortBy"),
   clearFilters: document.getElementById("clearFilters"),
-  exportCsv: document.getElementById("exportCsv"),
   resultsInfo: document.getElementById("resultsInfo"),
   grid: document.getElementById("grid"),
   statsBar: document.getElementById("statsBar"),
   themeToggle: document.getElementById("themeToggle"),
   modalOverlay: document.getElementById("modalOverlay"),
   modalBody: document.getElementById("modalBody"),
+  compareBar: document.getElementById("compareBar"),
+  compareBarText: document.getElementById("compareBarText"),
+  compareBarClear: document.getElementById("compareBarClear"),
+  compareBarGo: document.getElementById("compareBarGo"),
 };
 
-let currentDisplayRows = []; // last rendered set, for CSV export
+let currentDisplayRows = []; // last rendered set
+const compareSelection = new Map(); // insId -> {name, crsCode, crsNum, courseTitle, rating, responses}
 
 /* ---------------------- Setup: stats + dropdowns ---------------------- */
 
@@ -156,15 +181,14 @@ function initDepartmentOptions() {
 function updateCourseOptions() {
   const dept = els.deptSelect.value;
   els.courseSelect.innerHTML = "";
+
   if (!dept) {
-    const opt = document.createElement("option");
-    opt.value = "";
-    opt.textContent = "Select a department first";
-    els.courseSelect.appendChild(opt);
-    els.courseSelect.disabled = true;
+    els.courseWaiting.style.display = "";
+    els.courseSelect.style.display = "none";
+    els.courseSelect.value = "";
     return;
   }
-  els.courseSelect.disabled = false;
+
   const allOpt = document.createElement("option");
   allOpt.value = "";
   allOpt.textContent = "All courses in department";
@@ -187,6 +211,19 @@ function updateCourseOptions() {
     opt.value = key;
     opt.textContent = label;
     els.courseSelect.appendChild(opt);
+  }
+
+  // "Pop in" the real dropdown in place of the waiting hint -- this is the
+  // actual fix for people trying to pick a course before a department:
+  // there's nothing there to click until a department is chosen, rather
+  // than a disabled control that invites a click anyway.
+  const wasHidden = els.courseWaiting.style.display !== "none";
+  els.courseWaiting.style.display = "none";
+  els.courseSelect.style.display = "";
+  if (wasHidden) {
+    els.courseSelect.classList.remove("pop-in");
+    void els.courseSelect.offsetWidth; // restart the animation
+    els.courseSelect.classList.add("pop-in");
   }
 }
 
@@ -355,7 +392,7 @@ function courseSubHtml(item) {
   return `<div class="chips">${shown}${more}</div>`;
 }
 
-function renderCard(item, index) {
+function renderCard(item, index, courseSelected) {
   const quote = bestQuote(item);
   const count = totalCommentCount(item);
   const idPrefix = `card-${index}`;
@@ -364,11 +401,20 @@ function renderCard(item, index) {
     ? `<span class="quote">${escapeHtml(quote.text)}</span>`
     : `<span class="none">No written comments on file.</span>`;
 
+  // Comparing is only offered when looking at one specific course (so every
+  // card is directly comparable -- same course, same students' context).
+  const checkHtml = courseSelected
+    ? `<label class="compare-check-wrap" title="Select to compare">
+         <input type="checkbox" class="compare-check" data-insid="${item.insId}" ${compareSelection.has(item.insId) ? "checked" : ""} />
+       </label>`
+    : "";
+
   return `
     <div class="card" data-index="${index}" tabindex="0">
       <div class="card-cap" style="--tint:${deptTint(primaryDept(item))}"></div>
       <div class="card-body">
         <div class="card-top">
+          ${checkHtml}
           <div>
             <div class="card-name">${escapeHtml(item.name || "Unknown instructor")}</div>
             ${courseSubHtml(item)}
@@ -405,6 +451,7 @@ function render() {
   display = sortRows(display);
 
   currentDisplayRows = display;
+  renderCompareBar(courseSelected);
 
   els.resultsInfo.textContent = `Showing ${display.length} instructor${display.length === 1 ? "" : "s"}`;
 
@@ -420,7 +467,7 @@ function render() {
 
   let html = "";
   display.forEach((item, i) => {
-    html += renderCard(item, i);
+    html += renderCard(item, i, courseSelected);
     // A light, clearly-labeled in-feed ad slot every 12 cards -- easy to
     // wire up to a real ad network later, never overlays or auto-plays.
     if ((i + 1) % 12 === 0 && i !== display.length - 1) {
@@ -428,6 +475,92 @@ function render() {
     }
   });
   els.grid.innerHTML = html;
+}
+
+/* ---------------------------- Compare tool ---------------------------- */
+
+function renderCompareBar(courseSelected) {
+  const bar = els.compareBar;
+  if (!courseSelected || compareSelection.size < 2) {
+    bar.style.display = "none";
+    return;
+  }
+  bar.style.display = "";
+  els.compareBarText.textContent =
+    `${compareSelection.size} instructors selected for comparison`;
+}
+
+function openCompareModal() {
+  const entries = [...compareSelection.values()];
+  if (entries.length < 2) return;
+  const course = entries[0]; // all entries share the same course by construction
+
+  const rows = entries
+    .map(
+      (e) => `<div class="compare-instructor-row">
+        <span class="name">${escapeHtml(e.name)}</span>
+        <span class="stat">${e.rating != null ? e.rating.toFixed(2) : "N/A"} <span style="font-weight:400; color:var(--ink-soft); font-size:11px;">(${e.responses} resp.)</span></span>
+      </div>`
+    )
+    .join("");
+
+  els.modalBody.innerHTML = `
+    <button class="modal-close" data-close>&times;</button>
+    <h2>Comparing ${entries.length} instructors</h2>
+    <div class="modal-sub">${escapeHtml(course.crsCode)} ${escapeHtml(course.crsNum)}${course.courseTitle ? " — " + escapeHtml(course.courseTitle) : ""}</div>
+    <div class="course-list" style="border-top:none; margin-top:12px;">${rows}</div>
+    <label for="compareQuery" style="font-size:12px; font-weight:600; color:var(--ink-soft);">
+      What are you looking for? (optional)
+    </label>
+    <textarea id="compareQuery" class="compare-query-input" placeholder="e.g. lighter workload, clearer grading, more interactive classes…"></textarea>
+    <div class="ai-row ai-row-active">
+      <button id="compareGenerate" class="ai-btn" ${AI_CONFIG.enabled ? "" : "disabled"}>✨ Generate AI Comparison</button>
+      <span class="ai-note">${AI_CONFIG.enabled ? "Uses each instructor's ratings and comments for this course." : "Set up the AI proxy first (see gemini-proxy/README.md)."}</span>
+    </div>
+    <div class="ai-summary-box" id="compareResult" style="display:none;"></div>
+  `;
+
+  els.modalBody.querySelector("[data-close]").addEventListener("click", closeModal);
+
+  const genBtn = document.getElementById("compareGenerate");
+  const resultBox = document.getElementById("compareResult");
+  if (AI_CONFIG.enabled) {
+    genBtn.addEventListener("click", async () => {
+      genBtn.disabled = true;
+      genBtn.textContent = "✨ Comparing…";
+      resultBox.style.display = "none";
+
+      // Make sure each selected instructor's detail is loaded, then pull
+      // their comments for THIS specific course only.
+      const instructors = [];
+      for (const e of entries) {
+        await ensureInstructorDetail(e.insId);
+        const terms = getTerms(e.insId, course.crsCode, course.crsNum);
+        instructors.push({
+          name: e.name,
+          rating: e.rating,
+          responses: e.responses,
+          instrComments: terms.flatMap((t) => (t.comments && t.comments.instructor) || []).slice(0, 8),
+          courseComments: terms.flatMap((t) => (t.comments && t.comments.course) || []).slice(0, 8),
+        });
+      }
+
+      const query = document.getElementById("compareQuery").value;
+      const result = await generateAIComparison(course, instructors, query);
+
+      genBtn.disabled = false;
+      genBtn.textContent = "✨ Generate AI Comparison";
+      if (result.comparison) {
+        resultBox.innerHTML = `<span class="ai-label">AI comparison</span>${escapeHtml(result.comparison).replace(/\n/g, "<br>")}`;
+        resultBox.style.display = "";
+      } else {
+        const note = els.modalBody.querySelector(".ai-row .ai-note");
+        note.textContent = result.error || "Couldn't generate a comparison right now.";
+      }
+    });
+  }
+
+  els.modalOverlay.classList.add("open");
 }
 
 /* ---------------------------- Modal ---------------------------- */
@@ -633,6 +766,13 @@ function renderModalContent(item) {
       <div class="stat-box"><div class="val">${item.courseRating != null ? item.courseRating.toFixed(2) : "N/A"}</div><div class="lbl">Course rating</div></div>
       <div class="stat-box"><div class="val">${item.nResponses}</div><div class="lbl">Total responses</div></div>
     </div>
+    <div class="ai-row${AI_CONFIG.enabled ? " ai-row-active" : ""}">
+      <button class="ai-btn" ${AI_CONFIG.enabled ? "" : "disabled"}>✨ AI Summary</button>
+      <span class="ai-note">${AI_CONFIG.enabled
+        ? "Summarizes the comments below using Gemini."
+        : "Coming soon — connect an API in app.js to enable AI-generated summaries."}</span>
+    </div>
+    <div class="ai-summary-box" style="display:none;"></div>
     <div class="course-list">${courseRows}</div>
     <p class="ai-note" style="margin:-10px 0 16px;">Tap a course to see it by term; tap a term to see the full question breakdown.</p>
     <div class="tabs-row">
@@ -640,13 +780,6 @@ function renderModalContent(item) {
       ${courseFilterHtml}
     </div>
     ${tabPanels}
-    <div class="ai-row">
-      <button class="ai-btn" ${AI_CONFIG.enabled ? "" : "disabled"}>✨ AI Summary</button>
-      <span class="ai-note">${AI_CONFIG.enabled
-        ? "Summarizes the comments currently shown above using Gemini."
-        : "Coming soon — connect an API in app.js to enable AI-generated summaries."}</span>
-    </div>
-    <div class="ai-summary-box" style="display:none;"></div>
   `;
 
   const aiBtn = els.modalBody.querySelector(".ai-btn");
@@ -788,35 +921,6 @@ function removePopover() {
   }
 }
 
-/* ---------------------------- CSV export ---------------------------- */
-
-function exportCsv() {
-  const rows = currentDisplayRows;
-  if (!rows.length) return;
-  const header = ["Instructor", "Courses", "Instructor Rating", "Course Rating",
-                   "Responses", "Evaluated Sections", "Low Confidence"];
-  const lines = [header.join(",")];
-  for (const r of rows) {
-    const courses = r.courses.map((c) => `${c.crsCode} ${c.crsNum}`).join("; ");
-    const row = [
-      r.name, courses,
-      r.rating != null ? r.rating.toFixed(2) : "",
-      r.courseRating != null ? r.courseRating.toFixed(2) : "",
-      r.nResponses, r.nEvals, r.lowConfidence ? "Yes" : "No",
-    ].map((v) => `"${String(v).replace(/"/g, '""')}"`);
-    lines.push(row.join(","));
-  }
-  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "bilkent_instructor_results.csv";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-}
-
 /* ---------------------------- Wiring ---------------------------- */
 
 function init() {
@@ -831,10 +935,14 @@ function init() {
   render();
 
   els.deptSelect.addEventListener("change", () => {
+    compareSelection.clear();
     updateCourseOptions();
     render();
   });
-  els.courseSelect.addEventListener("change", render);
+  els.courseSelect.addEventListener("change", () => {
+    compareSelection.clear();
+    render();
+  });
   els.sortBy.addEventListener("change", render);
   els.minResponses.addEventListener("change", render);
 
@@ -845,6 +953,7 @@ function init() {
   });
 
   els.clearFilters.addEventListener("click", () => {
+    compareSelection.clear();
     els.deptSelect.value = "";
     updateCourseOptions();
     els.search.value = "";
@@ -853,9 +962,12 @@ function init() {
     render();
   });
 
-  els.exportCsv.addEventListener("click", exportCsv);
-
   els.grid.addEventListener("click", (e) => {
+    const checkWrap = e.target.closest(".compare-check-wrap");
+    if (checkWrap) {
+      e.stopPropagation();
+      return; // the checkbox's own "change" listener (below) handles this
+    }
     const cautionBtn = e.target.closest(".provisional-flag");
     if (cautionBtn) {
       e.stopPropagation();
@@ -871,11 +983,35 @@ function init() {
     }
   });
 
+  els.grid.addEventListener("change", (e) => {
+    if (!e.target.matches(".compare-check")) return;
+    const card = e.target.closest(".card");
+    const idx = parseInt(card.dataset.index, 10);
+    const item = currentDisplayRows[idx];
+    const insId = item.insId;
+    if (e.target.checked) {
+      const c = item.courses[0];
+      compareSelection.set(insId, {
+        insId, name: item.name, crsCode: c.crsCode, crsNum: c.crsNum,
+        courseTitle: c.courseTitle, rating: item.rating, responses: item.nResponses,
+      });
+    } else {
+      compareSelection.delete(insId);
+    }
+    renderCompareBar(true);
+  });
+
   els.grid.addEventListener("keydown", (e) => {
     if (e.key !== "Enter") return;
     const card = e.target.closest(".card");
     if (card) openModal(currentDisplayRows[parseInt(card.dataset.index, 10)]);
   });
+
+  els.compareBarClear.addEventListener("click", () => {
+    compareSelection.clear();
+    render();
+  });
+  els.compareBarGo.addEventListener("click", openCompareModal);
 
   els.modalOverlay.addEventListener("click", (e) => {
     if (e.target === els.modalOverlay) closeModal();
