@@ -60,7 +60,6 @@
   <!-- Ad slot: top banner. Non-intrusive, clearly labeled, no popups/overlays.
        Replace this div's contents with your ad network's snippet (e.g. an
        AdSense <ins> tag) when ready. -->
-  <div class="ad-slot banner">Advertisement</div>
 
   <div class="filters">
     <div class="filters-grid">
@@ -72,7 +71,7 @@
       </div>
       <div class="field">
         <label for="courseSelect">Course</label>
-        <div id="courseWaiting" class="course-waiting">Pick a department to see its courses</div>
+        <div id="courseWaiting" class="course-waiting">Pick a department first</div>
         <select id="courseSelect" style="display:none;">
           <option value="">All courses in department</option>
         </select>
@@ -91,9 +90,7 @@
           <option value="50">50+</option>
         </select>
       </div>
-    </div>
-    <div class="filters-row2">
-      <div class="field" style="min-width:220px;">
+      <div class="field">
         <label for="sortBy">Sort by</label>
         <select id="sortBy">
           <option value="rating-desc">Rating (high to low)</option>
@@ -114,7 +111,7 @@
           </optgroup>
         </select>
       </div>
-      <div style="display:flex; gap:10px; align-items:center;">
+      <div class="field field-action">
         <button id="clearFilters" class="small-btn">↺ Clear filters</button>
       </div>
     </div>
@@ -127,6 +124,8 @@
   <div id="grid" class="grid">
     <div class="empty-state"><span class="spinner"></span><h3 style="margin-top:14px;">Loading…</h3></div>
   </div>
+
+  <div class="ad-slot banner">Advertisement</div>
 
   <footer class="site-footer">
     Data source: Bilkent University STARS public course &amp; instructor evaluation reports.

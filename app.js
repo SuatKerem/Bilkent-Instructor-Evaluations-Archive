@@ -388,8 +388,8 @@ function courseSubHtml(item) {
     return `<div class="card-sub">${escapeHtml(c.crsCode)} ${escapeHtml(c.crsNum)}${c.courseTitle ? " — " + escapeHtml(c.courseTitle) : ""}</div>`;
   }
   const codes = [...new Set(item.courses.map((c) => `${c.crsCode} ${c.crsNum}`))];
-  const shown = codes.slice(0, 3).map((c) => `<span class="chip">${escapeHtml(c)}</span>`).join("");
-  const more = codes.length > 3 ? `<span class="chip chip-more">+${codes.length - 3}</span>` : "";
+  const shown = codes.slice(0, 2).map((c) => `<span class="chip">${escapeHtml(c)}</span>`).join("");
+  const more = codes.length > 2 ? `<span class="chip chip-more">+${codes.length - 2}</span>` : "";
   return `<div class="chips">${shown}${more}</div>`;
 }
 
@@ -427,7 +427,6 @@ function renderCard(item, index, courseSelected) {
         </div>
         <div class="meta-row">
           <span class="meta-item">👥 <b>${item.nResponses}</b> response${item.nResponses === 1 ? "" : "s"}</span>
-          <span class="meta-item">📄 <b>${item.nEvals}</b> section${item.nEvals === 1 ? "" : "s"}</span>
           <span class="meta-item">💬 <b>${count}</b> comment${count === 1 ? "" : "s"}</span>
         </div>
         <div class="pull-quote">${commentHtml}</div>
