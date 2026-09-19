@@ -234,12 +234,12 @@ a { color: inherit; }
 
 .course-waiting {
   padding: 9px 10px;
-  border: 1px dashed var(--line);
+  border: 1.5px dashed var(--rose);
   border-radius: var(--radius-sm);
-  background: var(--panel-soft);
-  color: var(--ink-soft);
+  background: var(--rose-tint);
+  color: var(--rose-deep);
   font-size: 13px;
-  font-style: italic;
+  font-weight: 600;
 }
 @keyframes popIn {
   0% { opacity: 0; transform: scale(0.97); }
@@ -277,6 +277,11 @@ a { color: inherit; }
 /* ---------------------------------------------------------------------- */
 
 .results-info { color: var(--ink-soft); font-size: 13.5px; margin: 4px 2px 14px; }
+.compare-hint {
+  background: var(--rose-tint); border: 1px solid var(--rose); color: var(--rose-deep);
+  border-radius: var(--radius-sm); padding: 10px 14px; font-size: 13.5px;
+  margin: -4px 2px 16px; line-height: 1.5;
+}
 
 .grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
 @media (min-width: 640px) { .grid { grid-template-columns: 1fr 1fr; } }

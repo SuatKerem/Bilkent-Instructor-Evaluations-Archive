@@ -132,6 +132,7 @@ const els = {
   modalBody: document.getElementById("modalBody"),
   compareBar: document.getElementById("compareBar"),
   compareBarText: document.getElementById("compareBarText"),
+  compareHint: document.getElementById("compareHint"),
   compareBarClear: document.getElementById("compareBarClear"),
   compareBarGo: document.getElementById("compareBarGo"),
 };
@@ -480,6 +481,15 @@ function render() {
 /* ---------------------------- Compare tool ---------------------------- */
 
 function renderCompareBar(courseSelected) {
+  // The hint banner: visible whenever a specific course is selected (so
+  // the compare checkboxes are actually on the cards) and the person
+  // hasn't started using it yet. Once they've picked 2+, the floating bar
+  // below takes over as the active indicator, so the static hint steps
+  // aside rather than sitting there redundantly.
+  if (els.compareHint) {
+    els.compareHint.style.display = (courseSelected && compareSelection.size < 2) ? "" : "none";
+  }
+
   const bar = els.compareBar;
   if (!bar) return; // gracefully no-op if this element is missing for any reason
   if (!courseSelected || compareSelection.size < 2) {
