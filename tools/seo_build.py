@@ -177,7 +177,7 @@ def main():
 {course_rows}
     </div>
 {cm}    <div class="ai-row" style="margin-top:20px;">
-      <a href="../index.html?instructor={ins_id}" class="small-btn" style="text-decoration:none; display:inline-block;">
+      <a href="../?instructor={ins_id}" class="small-btn" style="text-decoration:none; display:inline-block;">
         Open full profile &mdash; every course, every comment &rarr;
       </a>
     </div>
